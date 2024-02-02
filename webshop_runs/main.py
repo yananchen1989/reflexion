@@ -1,7 +1,7 @@
 import os
 import json
-import argparse
-
+import argparse,random
+from termcolor import colored
 from webshop_trial import run_trial
 from generate_reflections import update_memory
 
@@ -45,15 +45,22 @@ def main(args) -> None:
 
         # initialize environment configs
         env_configs: List[Dict[str, Any]] = []
-        for i in range(args.num_envs):
+        task_ids = list(range(10000))
+        random.Random(333).shuffle(task_ids)
+        for idx in task_ids:
             env_configs += [{
-                'name': f'env_{i}',
+                'name': f'env_{idx}',
                 'memory': [],
                 'is_success': False
             }]
-    
-    world_log_path: str = os.path.join(logging_dir, 'world.log')
+            if len(env_configs) == args.num_envs:
+                break
 
+        print('env_configs===>\n', env_configs)
+
+
+    world_log_path: str = os.path.join(logging_dir, 'world.log')
+    open(world_log_path, 'w').close()
     # print start status to user
     if args.is_resume:
         print(f"""
@@ -86,10 +93,15 @@ def main(args) -> None:
     while trial_idx < args.num_trials:
         with open(world_log_path, 'a') as wf:
             wf.write(f'\n\n***** Start Trial #{trial_idx} *****\n\n')
+            print(colored(f'***** Start Trial #{trial_idx} *****', 'white'))
 
         # set paths to log files
         trial_log_path: str = os.path.join(args.run_name, f'trial_{trial_idx}.log')
-        trial_env_configs_log_path: str = os.path.join(args.run_name, f'env_results_trial_{trial_idx}.json')
+        trial_env_configs_log_path: str =  os.path.join(args.run_name, f'env_results_trial_{trial_idx}.json')
+
+        print("trial_log_path==>", trial_log_path)
+        print("trial_env_configs_log_path==>", trial_env_configs_log_path)
+
         if os.path.exists(trial_log_path):
             open(trial_log_path, 'w').close()
         if os.path.exists(trial_env_configs_log_path):
@@ -100,6 +112,7 @@ def main(args) -> None:
 
         # update memory if needed
         if args.use_memory:
+            print(colored("begin to update_memory", 'red'))
             env_configs: List[Dict[str, Any]] = update_memory(trial_log_path, env_configs)
 
         # log env configs for trial
@@ -109,6 +122,7 @@ def main(args) -> None:
         # log world for trial
         with open(world_log_path, 'a') as wf:
             wf.write(f'\n\n***** End Trial #{trial_idx} *****\n\n')
+            print(colored(f'***** End Trial #{trial_idx} *****\n\n', 'white'))
 
         trial_idx += 1
 

@@ -1,4 +1,5 @@
 python main.py \
-        --num_trials 10 \
+        --num_trials 7 \
         --num_envs 100 \
-        --run_name "reflexion_run_logs_3" \
+        --run_name "base_run_logs_ttt_memory" \
+        --use_memory

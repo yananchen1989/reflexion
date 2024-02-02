@@ -5,12 +5,18 @@ import requests
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from env_history import EnvironmentHistory
+from termcolor import colored
 
 from typing import Any, Dict, List, Tuple
  
-openai.api_key = os.environ["OPENAI_API_KEY"]
+openai.api_key = ""
+openai.api_base = ""
+openai.api_type = 'azure'
+openai.api_version = '2023-09-01-preview'
 
-WEBSHOP_URL = "http://3.83.245.205:3000"
+# WEBSHOP_URL = "http://127.0.0.1:3000/"
+
+WEBSHOP_URL = "http://127.0.0.1:3001/"
 ACTION_TO_TEMPLATE = {
     'Description': 'description_page.html',
     'Features': 'features_page.html',
@@ -25,6 +31,7 @@ def llm(prompt, stop=["\n"]):
         cur_try = 0
         while cur_try < 6:
             response = openai.Completion.create(
+                engine = "gpt-35-turbo",
               model="text-davinci-002",
               prompt=prompt,
               temperature=cur_try * 0.2,
@@ -41,9 +48,46 @@ def llm(prompt, stop=["\n"]):
             cur_try += 1
         return ""
     except Exception as e:
-        print(prompt)
+        # print(prompt)
+        print(e)
         import sys
         sys.exit(1)
+
+def llm_chat(prompt, stop=["\n"]):
+    messages = [
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ]
+    try:
+        cur_try = 0
+        while cur_try < 6:
+            response = openai.ChatCompletion.create(
+              engine = "gpt-35-turbo",
+              model='gpt-3.5-turbo-1106',
+              messages=messages,
+              temperature=cur_try * 0.2,
+              max_tokens=100,
+              top_p=1,
+              frequency_penalty=0.0,
+              presence_penalty=0.0,
+              stop=stop
+            )
+            text = response.choices[0]["message"]["content"]
+            # dumb way to do this
+            if len(text.strip()) >= 5:
+                return response.choices[0]["message"]["content"]
+            cur_try += 1
+        return ""
+    except Exception as e:
+        # print(prompt)
+        print("llm_chat error")
+        print(e)
+        import sys
+        sys.exit(1)
+
+
 
 def clean_str(p):
   return p.encode().decode("unicode-escape").encode("latin1").decode("utf-8")
@@ -204,19 +248,32 @@ class webshopEnv:
         reward = info.get('reward', 0.0)
         return observation, reward, done
 
-def webshop_run(idx, env, base_prompt, memory: List[str], to_print=True) -> Tuple[EnvironmentHistory, bool]:
+# env = webshopEnv()
+# idx = '19111'
+# action = 'reset'
+# res = env.step(idx, action)
+# observation = res[0]
+# print(observation)
+
+
+def webshop_run(env_name, env, base_prompt, memory: List[str], to_print=True) -> Tuple[EnvironmentHistory, bool]:
+    idx = env_name.split('_')[-1]
     action = 'reset'
     init_prompt = base_prompt
     prompt = ''
 
     res = env.step(idx, action)
     observation = res[0]
+    print(colored("first observe==>{}".format(observation), 'blue'))
+
     if len(memory) > 3:
         env_history = EnvironmentHistory(base_prompt, observation, memory[-3:], [])
     else:
         env_history = EnvironmentHistory(base_prompt, observation, memory, [])
+
     env_history.reset()
     for i in range(15):
+        print(i)
         env_history.add("action", action)
         try:
             res = env.step(idx, action)
@@ -227,9 +284,10 @@ def webshop_run(idx, env, base_prompt, memory: List[str], to_print=True) -> Tupl
         if action.startswith('think'):
             observation = 'OK.'
 
-        if to_print:
-            print(f'Action: {action}\nObservation: {observation}\n')
-            sys.stdout.flush()
+        # if to_print:
+        #     print(f'Action: {action}\nObservation: {observation}\n')
+        #     sys.stdout.flush()
+
         if i:
             prompt += f' {action}\nObservation: {observation}\n\nAction:'
         else:
@@ -242,8 +300,9 @@ def webshop_run(idx, env, base_prompt, memory: List[str], to_print=True) -> Tupl
             print(res)
             return env_history, res[1] == 1.0
 
-        action = llm(init_prompt + prompt[-(6400-len(init_prompt)):], stop=['\n']).lstrip(' ')
-
+        #action = llm_chat(init_prompt + prompt[-(6400-len(init_prompt)):], stop=['\n']).lstrip(' ')
+        action = llm_chat(str(env_history) + "\n\nAction:", stop=['\n']).strip().lstrip(' ') # fix the reflexion
+        print('action===>', action)
     return env_history, False
 
 def run_trial(
@@ -260,35 +319,40 @@ def run_trial(
     num_envs: int = len(env_configs)
 
     for z, env_config in enumerate(env_configs):
+        print('\n',
+              colored(env_config, 'green'), '\n', 
+              colored('memory length:{}'.format(len(env_config['memory'])), 'green')
+              )
+        env_name = env_config['name']
         if env_config["is_success"]:
             num_successes += 1
             # log to world log
             with open(world_log_path, 'a') as wf:
-                wf.write(f'Environment #{z} Trial #{trial_idx}: SUCCESS\n')
+                wf.write(f'Environment #{z} env:{env_name} Trial #{trial_idx}: SUCCESS\n')
             with open(trial_log_path, 'a') as wf:
-                wf.write(f'\n#####\n\nEnvironment #{z}: Success\n\n#####\n')
+                wf.write(f'\n#####\n\nEnvironment #{z} env:{env_name} Success\n\n#####\n')
             continue
 
         try:
-            final_env_history, is_success = webshop_run(f'fixed_{z}', env, BASE_PROMPT, env_config["memory"] if use_memory else [], to_print=True)
+            final_env_history, is_success = webshop_run(env_name, env, BASE_PROMPT, env_config["memory"] if use_memory else [], to_print=False)
             if is_success:
-                status_str: str = f'Environment #{z} Trial #{trial_idx}: SUCCESS'
+                status_str: str = f'Environment #{z} env:{env_name} Trial #{trial_idx}: SUCCESS'
                 env_configs[z]["is_success"] = True
                 num_successes += 1
                 num_additional_successes += 1
             else:
-                status_str: str = f'Environment #{z} Trial #{trial_idx}: FAIL'
+                status_str: str = f'Environment #{z} env:{env_name} Trial #{trial_idx}: FAIL'
 
             # log env results to trial log
-            with open(trial_log_path, 'a') as wf:
-                wf.write(f'\n#####\n\nEnvironment #{z}:\n{str(final_env_history)}\n\nSTATUS: {"OK" if is_success else "FAIL"}\n\n#####\n')
+            with open(trial_log_path, 'a', encoding='UTF-8') as wf:
+                wf.write(f'\n#####\n\nEnvironment #{z} env:{env_name}:\n{str(final_env_history)}\n\nSTATUS: {"OK" if is_success else "FAIL"}\n\n#####\n')
 
         except AssertionError:
-            status_str: str = f'Environment #{z} Trial #{trial_idx}: FAIL'
+            status_str: str = f'Environment #{z} env:{env_name} Trial #{trial_idx}: FAIL'
 
             # log env results to trial log
             with open(trial_log_path, 'a') as wf:
-                wf.write(f'\n#####\n\nEnvironment #{z}:\nAssertion Error\n\nSTATUS: FAIL\n\n#####\n')
+                wf.write(f'\n#####\n\nEnvironment #{z} env:{env_name}:\nAssertion Error\n\nSTATUS: FAIL\n\n#####\n')
 
         # log to world log
         with open(world_log_path, 'a') as f:
@@ -301,7 +365,7 @@ SUCCESS: {num_successes}
 ADDITIONAL SUCCESS: {num_additional_successes}
 FAIL: {num_envs - num_successes}
 TOTAL: {num_envs}
-ACCURACY: {round(num_successes / num_envs, 2)}
+ACCURACY: {round(num_successes / num_envs, 4)}
 -----"""
     with open(trial_log_path, 'a') as wf:
         wf.write(log_str)
